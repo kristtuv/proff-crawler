@@ -1,141 +1,179 @@
 # -*- coding: utf-8 -*-
-import certifi
+import requests
 import re
+from bs4 import BeautifulSoup as bsoup
 import json
-import pandas as pd
-import numpy as np
-import urllib3 as url3
-from bs4 import BeautifulSoup as bs
-from urllib.parse import quote
+
+# x = {
+#   "name": "Bounum",
+#   "Aksjer": 30,
+#   "Prosent": 100,
+#   "owners":[
+#       { 
+#           "name": "Something",
+#           "Aksjer": 30,
+#           "Prosent": 100,
+#           "owners": [
+#               { 
+#                   "name": "Something else",
+#                   "Aksjer": 30,
+#                   "Prosent": 100,
+#                   "owners": []
+#               },
+#               { 
+#                   "name": "Something",
+#                   "Aksjer": 30,
+#                   "Prosent": 100,
+#                   "owners": []
+#               }
+#               ]
+#       },
+#       { 
+#           "name": "Something else",
+#           "Aksjer": 30,
+#           "Prosent": 100,
+#           "owners": []
+#       },
+#       { 
+#           "name": "Something",
+#           "Aksjer": 30,
+#           "Prosent": 100,
+#           "owners": []
+#       }
+#       ]
+# }
+
+# y = json.dumps(x, indent=4)
+# print(y)
+
+
+def remove_whitespace(string):
+    """
+    Remove whitespace in string
+    """
+    return  string.strip().replace(' ', '')
+
+
+def get_html(url):
+    """
+    Fetches html from a given url
+    """
+    r = requests.get(url).text
+    return r
+
+def prepend_domain(link):
+    """
+    Urls are directly combined as given in *args
+    """
+    top_level_domain ='https://www.proff.no'
+    return top_level_domain + link 
 
 class ProffCrawler:
-    def __init__(self, company_name, TLD ='https://www.proff.no'):
-        ###
-        #Defining starting variabels#
-        ###
-        bransje_url = 'https://www.proff.no/bransjes%C3%B8k?q={}'.format(self.rw(company_name))
-        self.bransje_url = bransje_url 
-        self.TLD = TLD
-        self.company_name = company_name
+    def __init__(self, company_name):
+        top_level_domain ='https://www.proff.no'
+        search_url = (f'{top_level_domain}/bransjes%C3%B8k?q='
+                      f'{remove_whitespace(company_name)}')
+        shareholders_url = self.get_shareholders_url(search_url, company_name)
+        shareholders = self.get_json(shareholders_url)
+        concern = shareholders['entity']
+        owners = shareholders['owners']
+        concern['owners'] = owners
 
+        self.concern = concern
 
-    def rw(self, url_name):
-        """
-        Remove whitespace in url
-        """
-        return  url_name.strip().replace(' ', '')
-
-    def concatenate_urls(self, *args):
-        """
-        Urls are directly combined as given in *args
-        """
-        return ''.join(args)
-
-    def get_roller(self, url):
-        return url.replace('selskap', 'roller')
-
-    def get_html(self, url_name):
-        """
-        Fetches html from a given url
-        """
-        user_agent = {'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36'}
-        http = url3.PoolManager(cert_reqs='CERT_REQUIRED', ca_certs=certifi.where(), headers=user_agent)
-        r = http.request('GET', url_name)
-        return r.data
-
-    def get_hyperlinks(self, html, search_word):
-        soup = bs(html, 'lxml').find(string=search_word)
-        try:
-            return soup.find_parent('a')['href']
-        except AttributeError:
-            return ''
-
-    def show_all_shareholders(self, html):
-        soup = bs(html, 'lxml').find(string='Vis alle aksjonærer')
-        try:
-            return soup.find_parent('a')['href']
-        except AttributeError:
-            return ''
-
-    def get_title(self, html, ):
-        soup = bs(html, 'lxml')
-        return soup.title.string
-     
-    def crawl_to_shareholders(self):
-        """
-        Crawling to the sharholderspage of the parent company
-        defined in company_name
-        """
-        html_company = self.get_html(self.bransje_url) #Initial html of search page
-        hyperlinks = self.get_hyperlinks(html_company,self.company_name) #Find url matching company name
-        company_url = self.concatenate_urls(self.TLD, hyperlinks) # Attach url to TLD
-        company_url = self.get_roller(company_url) #Crawl directly to "roller"-page
-        html_roller = self.get_html(company_url) #Get html of roller-page
-        shareholders_url = self.show_all_shareholders(html_roller) #Find shareholders url
-        shareholders_url = self.concatenate_urls(self.TLD, shareholders_url) #Crawl to shareholders-page
-        print(shareholders_url)
+    def get_shareholders_url(self, url, company_name):
+        search_html = get_html(url)
+        company_url = self.get_hyperlinks(search_html, company_name)
+        company_url = prepend_domain(company_url)
+        company_html = get_html(company_url)
+        shareholders_url = self.get_hyperlinks(company_html, 'Vis alle aksjonærer')
+        shareholders_url = prepend_domain(shareholders_url)
         return shareholders_url
 
-    def collect_data(self, dataframe, url, path):
-        html = self.get_html(url)
-        pattern = b"var shareholdersData = JSON.parse\((.+)\);" 
-        pat = re.compile(pattern)
-        shareholders_data = pat.findall(html)[0] #Find Json data
-        shareholders_data = json.loads(json.loads(shareholders_data))#Convert to dict
-       
-        sdo = shareholders_data['owners'] 
-        N = len(shareholders_data['owners'])
+    def get_hyperlinks(self, html, search_word):
+        soup = bsoup(html, 'html.parser').find(string=search_word)
+        try:
+            return soup.find_parent('a')['href']
+        except AttributeError:
+            return ''
 
-        columns = ['Bedriftslinje', 'Navn', 'Bedrift',
-                   'Aksjetype', 'Antall Aksjer',
-                   'Aksjeprosent', 'Totale Aksjer',
-                   'Url', 'Traversed'] #Dataframe columns to collect
+    def get_json(self, url=None):
+        html = get_html(url)
+        soup = bsoup(html, 'html.parser')
+        shareholders = soup.find(id='share-holders') #Find javascript share-holders
+        shareholders = shareholders.script.get_text() #Get script part
+        shareholders = shareholders.strip() #Strip excess whitespace
+        shareholders = shareholders.split('\n')[0] #Only use first variable (shareholders)
+        shareholders = shareholders.split(' = ')[1] #Remove variablename
+        shareholders = shareholders.strip(';\r') #Remove carriage return
+        shareholders = json.loads(shareholders)
+        return shareholders
 
-        data = [] 
-        for i in range(N):
-            name = sdo[i]['name']
-            company_trail = path + '\n' + name  
-            shareType = sdo[i]['shareType']
-            totalShares = sdo[i]['totalShares']
-            numberOfShares = sdo[i]['numberOfShares']
-            sharePercentage = sdo[i]['sharePercentage']
-            tabUrl = quote(sdo[i]['tabUrl'])
-            company = sdo[i]['company']
-            traversed = False
-            data.append([company_trail, name, company,
-                        shareType, numberOfShares,
-                        sharePercentage, totalShares,
-                        tabUrl, traversed])
+    def collect_data(self, concern):
+        has_owners = 'owners' in concern
+        is_company = owner['company']
+        if has_owners and is_company:
+            owners = concern['owners']
 
-        data = pd.DataFrame(data,columns=columns)
-        data['Bedrift'] = data['Bedrift'].astype(bool)
-        dataframe = dataframe.append(data, ignore_index=True)
-        print(dataframe)
-        return dataframe 
+        
+        else:
+            return break
 
-    def crawl(self, default=True):
-        shareholders_url = self.crawl_to_shareholders()
-        data = self.collect_data(pd.DataFrame(), shareholders_url, self.company_name)
-        N = len(data['Navn'])
-        if default:
-            while np.any(data['Traversed'] == False):
-                for index, row in data.iterrows():
-                    data.loc[index, 'Traversed'] = True
-                    if row['Bedrift'] and not row['Traversed']:
-                        url = self.concatenate_urls(self.TLD, row['Url'])
-                        new_data = self.collect_data(pd.DataFrame(), url, row['Bedriftslinje'])
-                        data = data.append(new_data, ignore_index=True)
-        return data
+
+        for owner in owners:
+
+            print(owner)
+            self.collect_data(owner)
+        # for owner in owner_dict:
+        #     if not has_owners:
+        #         break
+
+        #     else:
+        #         collect_data(owner)
+            # print(company)
+            # print(owner['owner'])
+            # items = owner.items()
+            # print(items)
+            # if 'owner' not owner.keys() and 'ent:
+
+            # print(c)
+            # print(owner)
+            # owner['hei'] = 'hei'
+            # print(owner)
+        # print(concern)
+            # owner.update('hei')
+            # print(owner)
+
+        # print(self.concern)
+
+
+    # def crawl(self, default=True):
+    #     shareholders_url = self.crawl_to_shareholders()
+    #     data = self.collect_data(pd.DataFrame(), shareholders_url, self.company_name)
+    #     N = len(data['Navn'])
+    #     if default:
+    #         while np.any(data['Traversed'] == False):
+    #             for index, row in data.iterrows():
+    #                 data.loc[index, 'Traversed'] = True
+    #                 if row['Bedrift'] and not row['Traversed']:
+    #                     url = self.concatenate_urls(self.TLD, row['Url'])
+    #                     new_data = self.collect_data(pd.DataFrame(), url, row['Bedriftslinje'])
+    #                     data = data.append(new_data, ignore_index=True)
+    #     return data
+    def blah(self):
+        d.update(bedrift)
 
 if __name__ == '__main__':
     company_name = 'Bonum AS'
-    company_name = 'Rec Silicon ASA'
+    # company_name = 'Femstø AS'
+    # company_name = 'Rec Silicon ASA'
     # company_name = quote('Femstø AS')
-    
     instance  = ProffCrawler(company_name)
-
-    columns = ['Bedriftslinje', 'Navn', 
-               'Aksjetype', 'Antall Aksjer',
-               'Aksjeprosent', 'Totale Aksjer'] #Dataframe columns to collect
-    data = instance.crawl()
+    concern = instance.concern
+    instance.collect_data(concern)
+    # instance.collect_data()
+    # instance.main()
+    #            'Aksjetype', 'Antall Aksjer',
+    #            'Aksjeprosent', 'Totale Aksjer'] #Dataframe columns to collect
+    # data = instance.crawl()
     # data[columns].to_csv('shareholders.csv', index=False)
