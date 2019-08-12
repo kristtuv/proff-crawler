@@ -3,49 +3,7 @@ import requests
 import re
 from bs4 import BeautifulSoup as bsoup
 import json
-
-# x = {
-#   "name": "Bounum",
-#   "Aksjer": 30,
-#   "Prosent": 100,
-#   "owners":[
-#       { 
-#           "name": "Something",
-#           "Aksjer": 30,
-#           "Prosent": 100,
-#           "owners": [
-#               { 
-#                   "name": "Something else",
-#                   "Aksjer": 30,
-#                   "Prosent": 100,
-#                   "owners": []
-#               },
-#               { 
-#                   "name": "Something",
-#                   "Aksjer": 30,
-#                   "Prosent": 100,
-#                   "owners": []
-#               }
-#               ]
-#       },
-#       { 
-#           "name": "Something else",
-#           "Aksjer": 30,
-#           "Prosent": 100,
-#           "owners": []
-#       },
-#       { 
-#           "name": "Something",
-#           "Aksjer": 30,
-#           "Prosent": 100,
-#           "owners": []
-#       }
-#       ]
-# }
-
-# y = json.dumps(x, indent=4)
-# print(y)
-
+from collections import OrderedDict
 
 def remove_whitespace(string):
     """
@@ -61,12 +19,14 @@ def get_html(url):
     r = requests.get(url).text
     return r
 
+
 def prepend_domain(link):
     """
     Urls are directly combined as given in *args
     """
     top_level_domain ='https://www.proff.no'
     return top_level_domain + link 
+
 
 class ProffCrawler:
     def __init__(self, company_name):
@@ -77,6 +37,7 @@ class ProffCrawler:
         shareholders = self.get_json(shareholders_url)
         concern = shareholders['entity']
         owners = shareholders['owners']
+        del concern['owners']
         concern['owners'] = owners
 
         self.concern = concern
@@ -111,69 +72,29 @@ class ProffCrawler:
 
     def collect_data(self, concern):
         has_owners = 'owners' in concern
-        is_company = owner['company']
+        is_company = concern['company']
         if has_owners and is_company:
             owners = concern['owners']
+            for owner in owners:
+                url = prepend_domain(owner['tabUrl'])
+                shareholders = self.get_json(url)
+                owner['owners'] = shareholders['owners']
+                self.collect_data(owner)
 
-        
-        else:
-            return break
+    def extract_desired_data(self):
+        ['name', 'organisationNumber', 'totalShares',
+         'location', 'numberOfShares', 'sharePercentage', 'owners']
 
+    def __str__(self):
+        return json.dumps(self.concern, indent=4)
 
-        for owner in owners:
-
-            print(owner)
-            self.collect_data(owner)
-        # for owner in owner_dict:
-        #     if not has_owners:
-        #         break
-
-        #     else:
-        #         collect_data(owner)
-            # print(company)
-            # print(owner['owner'])
-            # items = owner.items()
-            # print(items)
-            # if 'owner' not owner.keys() and 'ent:
-
-            # print(c)
-            # print(owner)
-            # owner['hei'] = 'hei'
-            # print(owner)
-        # print(concern)
-            # owner.update('hei')
-            # print(owner)
-
-        # print(self.concern)
-
-
-    # def crawl(self, default=True):
-    #     shareholders_url = self.crawl_to_shareholders()
-    #     data = self.collect_data(pd.DataFrame(), shareholders_url, self.company_name)
-    #     N = len(data['Navn'])
-    #     if default:
-    #         while np.any(data['Traversed'] == False):
-    #             for index, row in data.iterrows():
-    #                 data.loc[index, 'Traversed'] = True
-    #                 if row['Bedrift'] and not row['Traversed']:
-    #                     url = self.concatenate_urls(self.TLD, row['Url'])
-    #                     new_data = self.collect_data(pd.DataFrame(), url, row['Bedriftslinje'])
-    #                     data = data.append(new_data, ignore_index=True)
-    #     return data
-    def blah(self):
-        d.update(bedrift)
 
 if __name__ == '__main__':
     company_name = 'Bonum AS'
     # company_name = 'Femstø AS'
     # company_name = 'Rec Silicon ASA'
-    # company_name = quote('Femstø AS')
     instance  = ProffCrawler(company_name)
     concern = instance.concern
+    # print(type(concern))
     instance.collect_data(concern)
-    # instance.collect_data()
-    # instance.main()
-    #            'Aksjetype', 'Antall Aksjer',
-    #            'Aksjeprosent', 'Totale Aksjer'] #Dataframe columns to collect
-    # data = instance.crawl()
-    # data[columns].to_csv('shareholders.csv', index=False)
+    print(instance)
